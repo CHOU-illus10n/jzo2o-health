@@ -7,6 +7,7 @@ import com.jzo2o.health.model.dto.response.ReservationSettingResDTO;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -27,4 +28,11 @@ public interface IReservationSettingService extends IService<ReservationSetting>
     void upload(MultipartFile file) throws IOException;
 
     List<String> getReservationDateByMonth(String month);
+
+    Integer getNumberByDate(LocalDate reservationDate);
+
+    /**
+     * 预约后更新数据
+     */
+    void updateReservation(LocalDate orderDate);
 }

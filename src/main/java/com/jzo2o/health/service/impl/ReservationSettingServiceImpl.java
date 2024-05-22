@@ -1,10 +1,11 @@
 package com.jzo2o.health.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.jzo2o.common.expcetions.BadRequestException;
+import com.jzo2o.common.expcetions.CommonException;
+import com.jzo2o.common.utils.ObjectUtils;
 import com.jzo2o.health.mapper.ReservationSettingMapper;
 import com.jzo2o.health.model.domain.ReservationSetting;
 import com.jzo2o.health.model.dto.request.ReservationSettingUpsertReqDTO;
@@ -15,7 +16,6 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-import org.redisson.liveobject.condition.GTCondition;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -124,6 +124,27 @@ public class ReservationSettingServiceImpl extends ServiceImpl<ReservationSettin
         reservationSetting.setNumber(number);
         UpdateWrapper<ReservationSetting> updateWrapper = new UpdateWrapper<ReservationSetting>().eq("order_date", orderDate);
         saveOrUpdate(reservationSetting,updateWrapper);
+    }
+
+    @Override
+    public Integer getNumberByDate(LocalDate reservationDate) {
+        ReservationSetting reservationSetting = lambdaQuery().eq(ReservationSetting::getOrderDate, reservationDate).one();
+        if (ObjectUtils.isEmpty(reservationSetting)) {
+            throw new CommonException("当前日期没有设置预约人数");
+        }
+        return reservationSetting.getNumber();
+    }
+
+    @Override
+    public void updateReservation(LocalDate orderDate) {
+        Integer number = getNumberByDate(orderDate);
+        if(number <= 0){
+            throw new BadRequestException("预约人数已满");
+        }
+        lambdaUpdate().eq(ReservationSetting::getOrderDate, orderDate)
+                .setSql("number = number - 1")
+                .setSql("reservations = reservations + 1")
+                .update();
     }
 
 
