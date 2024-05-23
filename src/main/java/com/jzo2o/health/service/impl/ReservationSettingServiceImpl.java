@@ -147,5 +147,13 @@ public class ReservationSettingServiceImpl extends ServiceImpl<ReservationSettin
                 .update();
     }
 
+    @Override
+    public void recoverReservaton(LocalDate reservationDate) {
+        lambdaUpdate().eq(ReservationSetting::getOrderDate, reservationDate)
+                .setSql("number = number + 1")
+                .setSql("reservations = reservations - 1")
+                .update();
+    }
+
 
 }

@@ -35,4 +35,6 @@ public interface IReservationSettingService extends IService<ReservationSetting>
      * 预约后更新数据
      */
     void updateReservation(LocalDate orderDate);
+
+    void recoverReservaton(LocalDate reservationDate);
 }

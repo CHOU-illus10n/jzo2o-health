@@ -1,14 +1,21 @@
 package com.jzo2o.health.handler;
 
+import cn.hutool.core.collection.CollUtil;
 import com.jzo2o.api.trade.RefundRecordApi;
 import com.jzo2o.api.trade.dto.response.ExecutionResultResDTO;
+import com.jzo2o.common.utils.BeanUtils;
+import com.jzo2o.health.model.domain.Orders;
+import com.jzo2o.health.model.dto.request.OrdersCancelReqDTO;
 import com.jzo2o.health.properties.OrdersJobProperties;
+import com.jzo2o.health.service.IOrdersService;
+import com.xxl.job.core.context.XxlJobHelper;
 import com.xxl.job.core.handler.annotation.XxlJob;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
+import java.util.List;
 
 /**
  * 订单相关定时任务
@@ -27,6 +34,8 @@ public class OrdersHandler {
     private OrdersHandler orderHandler;
     @Resource
     private OrdersJobProperties ordersJobProperties;
+    @Resource
+    private IOrdersService ordersService;
 
     /**
      * 支付超时取消订单
@@ -34,7 +43,16 @@ public class OrdersHandler {
      */
     @XxlJob(value = "cancelOverTimePayOrder")
     public void cancelOverTimePayOrder() {
-
+        List<Orders> orders =  ordersService.queryOverTimePayOrdersListByCount(100);
+        if(CollUtil.isEmpty(orders)){
+            XxlJobHelper.log("查询超时订单列表为空！");
+            return;
+        }
+        for (Orders order : orders) {
+            OrdersCancelReqDTO ordersCancelReqDTO = BeanUtils.toBean(orders, OrdersCancelReqDTO.class);
+            ordersCancelReqDTO.setCancelReason("超过15分钟未支付，自动取消订单");
+            ordersService.cancel(ordersCancelReqDTO);
+        }
     }
 
     /**

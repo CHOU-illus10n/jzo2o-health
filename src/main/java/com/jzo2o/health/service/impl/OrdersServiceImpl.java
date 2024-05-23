@@ -2,6 +2,7 @@ package com.jzo2o.health.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.ObjectUtil;
+import com.baomidou.mybatisplus.core.injector.methods.SelectById;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.jzo2o.api.trade.NativePayApi;
 import com.jzo2o.api.trade.TradingApi;
@@ -20,17 +21,13 @@ import com.jzo2o.health.enums.OrderPayStatusEnum;
 import com.jzo2o.health.enums.OrderStatusEnum;
 import com.jzo2o.health.mapper.OrdersMapper;
 import com.jzo2o.health.model.UserThreadLocal;
-import com.jzo2o.health.model.domain.Member;
-import com.jzo2o.health.model.domain.Orders;
-import com.jzo2o.health.model.domain.Setmeal;
+import com.jzo2o.health.model.domain.*;
+import com.jzo2o.health.model.dto.request.OrdersCancelReqDTO;
 import com.jzo2o.health.model.dto.request.PlaceOrderReqDTO;
 import com.jzo2o.health.model.dto.response.OrdersPayResDTO;
 import com.jzo2o.health.model.dto.response.PlaceOrderResDTO;
 import com.jzo2o.health.properties.TradeProperties;
-import com.jzo2o.health.service.IMemberService;
-import com.jzo2o.health.service.IOrdersService;
-import com.jzo2o.health.service.IReservationSettingService;
-import com.jzo2o.health.service.ISetmealService;
+import com.jzo2o.health.service.*;
 import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.annotation.Resource;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -63,6 +61,11 @@ public class OrdersServiceImpl extends ServiceImpl<OrdersMapper,Orders> implemen
     private OrdersServiceImpl owner;
     @Resource
     private TradingApi tradingApi;
+    @Resource
+    private IOrdersCancelledService ordersCancelledService;
+
+    @Resource
+    private IOrdersRefundService ordersRefundService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -162,6 +165,93 @@ public class OrdersServiceImpl extends ServiceImpl<OrdersMapper,Orders> implemen
         OrdersPayResDTO ordersPayResDTO = BeanUtils.toBean(order, OrdersPayResDTO.class);
         ordersPayResDTO.setProductOrderNo(id);//设置订单号
         return ordersPayResDTO;
+    }
+
+    @Override
+    public void cancel(OrdersCancelReqDTO ordersCancelReqDTO) {
+        Long id = ordersCancelReqDTO.getId();//获取订单id
+        //查询订单
+        Orders orders = baseMapper.selectById(id);
+        if (ObjectUtils.isNull(orders)) {
+            throw new CommonException("该订单不存在");
+        }
+        //校验订单状态
+        if (!Objects.equals(orders.getOrderStatus(), OrderStatusEnum.NO_PAY.getStatus())) {
+            throw new CommonException("该订单不可取消");
+        }
+        orders.setOrderStatus(OrderStatusEnum.CANCELLED.getStatus());
+        int update = baseMapper.updateById(orders);
+        if(update <= 0) {
+            throw new BadRequestException("取消订单失败");
+        }
+        updateOrderCancelled(orders,ordersCancelReqDTO);
+    }
+
+    @Override
+    public void refund(OrdersCancelReqDTO ordersCancelReqDTO) {
+        //需要更新三个表的信息
+        //判断支付状态并更新订单表
+        Orders orders = baseMapper.selectById(ordersCancelReqDTO.getId());
+        if (ObjectUtils.isNull(orders)) {
+            throw new BadRequestException("该订单不存在");
+        }
+        //如果订单为待体检，支付状态为已支付则进行更新退款
+        if (ObjectUtils.equal(orders.getOrderStatus(),OrderStatusEnum.WAITING_CHECKUP.getStatus())
+                && ObjectUtils.equal(orders.getPayStatus(),OrderPayStatusEnum.PAY_SUCCESS.getStatus())) {
+            //设置订单状态为已关闭
+            orders.setOrderStatus(OrderStatusEnum.CLOSED.getStatus());
+            //更新订单表支付状态为退款中
+            orders.setPayStatus(OrderPayStatusEnum.REFUNDING.getStatus());
+            boolean update = updateById(orders);
+            if (!update) {
+                throw new BadRequestException("更新订单支付状态失败");
+            }
+            //更新退款记录表
+            updateOrdersRefund(orders);
+            //更新订单取消表
+            updateOrderCancelled(orders, ordersCancelReqDTO);
+            //启动新线程退款
+
+        }
+    }
+
+    @Override
+    public List<Orders> queryOverTimePayOrdersListByCount(int i) {
+        List<Orders> list = lambdaQuery()
+                .eq(Orders::getPayStatus, OrderPayStatusEnum.NO_PAY.getStatus())
+                .lt(Orders::getCreateTime, LocalDateTime.now().minusMinutes(15))
+                .last("limit" + i)
+                .list();
+        return list;
+    }
+
+    private void updateOrdersRefund(Orders orders) {
+        OrdersRefund ordersRefund = BeanUtils.toBean(orders, OrdersRefund.class);
+        ordersRefund.setRealPayAmount(orders.getSetmealPrice());
+        boolean save = ordersRefundService.save(ordersRefund);
+        if (!save) {
+            throw new BadRequestException("更新退款记录失败");
+        }
+    }
+
+    private void updateOrderCancelled(Orders orders, OrdersCancelReqDTO ordersCancelReqDTO) {
+        //只要下单 不管是否支付都要-1人数，所以需要恢复这个人数
+        reservationSettingService.recoverReservaton(orders.getReservationDate());
+        //插入订单取消表的信息
+        Long memberId = orders.getMemberId();
+        Member member = memberService.getById(memberId);
+        String memberName = member.getNickname();
+        OrdersCancelled ordersCancelled = BeanUtils.toBean(orders, OrdersCancelled.class);
+        //其中订单id可以转换， 取消人id和名称为orders中的member的信息 取消类型为1 用户取消
+        ordersCancelled.setCancellerName(memberName);
+        ordersCancelled.setCancellerId(memberId);
+        ordersCancelled.setCancellerType(1);
+        ordersCancelled.setCancelTime(LocalDateTime.now());
+        ordersCancelled.setCancelReason(ordersCancelReqDTO.getCancelReason());
+        boolean save = ordersCancelledService.saveOrUpdate(ordersCancelled);
+        if(!save) {
+            throw new BadRequestException("取消订单失败");
+        }
     }
 
     /**

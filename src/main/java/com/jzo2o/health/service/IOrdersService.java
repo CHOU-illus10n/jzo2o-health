@@ -3,9 +3,12 @@ package com.jzo2o.health.service;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.jzo2o.api.trade.enums.PayChannelEnum;
 import com.jzo2o.health.model.domain.Orders;
+import com.jzo2o.health.model.dto.request.OrdersCancelReqDTO;
 import com.jzo2o.health.model.dto.request.PlaceOrderReqDTO;
 import com.jzo2o.health.model.dto.response.OrdersPayResDTO;
 import com.jzo2o.health.model.dto.response.PlaceOrderResDTO;
+
+import java.util.List;
 
 /**
  * @author zwy
@@ -25,4 +28,10 @@ public interface IOrdersService extends IService<Orders> {
     OrdersPayResDTO pay(Long id, PayChannelEnum tradingChannel);
 
     OrdersPayResDTO getPayResult(Long id);
+
+    void cancel(OrdersCancelReqDTO ordersCancelReqDTO);
+
+    void refund(OrdersCancelReqDTO ordersCancelReqDTO);
+
+    List<Orders> queryOverTimePayOrdersListByCount(int i);
 }
