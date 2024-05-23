@@ -5,7 +5,9 @@ import com.jzo2o.api.trade.enums.PayChannelEnum;
 import com.jzo2o.health.model.domain.Orders;
 import com.jzo2o.health.model.dto.request.OrdersCancelReqDTO;
 import com.jzo2o.health.model.dto.request.PlaceOrderReqDTO;
+import com.jzo2o.health.model.dto.response.OrdersDetailResDTO;
 import com.jzo2o.health.model.dto.response.OrdersPayResDTO;
+import com.jzo2o.health.model.dto.response.OrdersResDTO;
 import com.jzo2o.health.model.dto.response.PlaceOrderResDTO;
 
 import java.util.List;
@@ -34,4 +36,8 @@ public interface IOrdersService extends IService<Orders> {
     void refund(OrdersCancelReqDTO ordersCancelReqDTO);
 
     List<Orders> queryOverTimePayOrdersListByCount(int i);
+
+    List<OrdersResDTO> pageQuery(Integer ordersStatus, Long sortBy);
+
+    OrdersDetailResDTO detail(Long id);
 }

@@ -2,7 +2,10 @@ package com.jzo2o.health.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.ObjectUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.injector.methods.SelectById;
+import com.baomidou.mybatisplus.core.metadata.OrderItem;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.jzo2o.api.trade.NativePayApi;
 import com.jzo2o.api.trade.TradingApi;
@@ -24,7 +27,9 @@ import com.jzo2o.health.model.UserThreadLocal;
 import com.jzo2o.health.model.domain.*;
 import com.jzo2o.health.model.dto.request.OrdersCancelReqDTO;
 import com.jzo2o.health.model.dto.request.PlaceOrderReqDTO;
+import com.jzo2o.health.model.dto.response.OrdersDetailResDTO;
 import com.jzo2o.health.model.dto.response.OrdersPayResDTO;
+import com.jzo2o.health.model.dto.response.OrdersResDTO;
 import com.jzo2o.health.model.dto.response.PlaceOrderResDTO;
 import com.jzo2o.health.properties.TradeProperties;
 import com.jzo2o.health.service.*;
@@ -223,6 +228,54 @@ public class OrdersServiceImpl extends ServiceImpl<OrdersMapper,Orders> implemen
                 .last("limit" + i)
                 .list();
         return list;
+    }
+
+    @Override
+    public List<OrdersResDTO> pageQuery(Integer ordersStatus, Long sortBy) {
+        CurrentUserInfo currentUserInfo = UserThreadLocal.currentUser();
+        Long id = currentUserInfo.getId();
+        LambdaQueryWrapper<Orders> queryWrapper = new LambdaQueryWrapper<>();
+        // 每次进行翻页时sortBy表示最后一个订单字段值
+        queryWrapper.eq(Orders::getMemberId, id)
+                .eq(ObjectUtils.isNotNull(ordersStatus), Orders::getOrderStatus, ordersStatus)
+                .lt(ObjectUtils.isNull(sortBy), Orders::getSortBy, sortBy);
+        Page<Orders> queryPage = new Page<>();
+        // 按照sort字段进行降序排序
+        queryPage.addOrder(OrderItem.desc("sort_by"));
+        queryPage.setSearchCount(false);
+        // 查询订单
+        Page<Orders> ordersPage = baseMapper.selectPage(queryPage, queryWrapper);
+        List<Orders> records = ordersPage.getRecords();
+        List<OrdersResDTO> ordersResDTOS = BeanUtils.copyToList(records, OrdersResDTO.class);
+        return ordersResDTOS;
+
+    }
+
+    @Override
+    public OrdersDetailResDTO detail(Long id) {
+        Orders orders = baseMapper.selectById(id);
+        // 通过懒加载的方式来检查订单是否超时
+        orders = cancelIfPayOvertime(orders);
+        OrdersDetailResDTO ordersDetailResDTO = BeanUtils.toBean(orders, OrdersDetailResDTO.class);
+        return ordersDetailResDTO;
+    }
+
+    private Orders cancelIfPayOvertime(Orders orders) {
+        //超过15分钟不支付自动取消
+        if(orders.getPayStatus() == OrderPayStatusEnum.NO_PAY.getStatus()
+        && orders.getCreateTime().plusMinutes(15).isBefore(LocalDateTime.now())) {
+            OrdersPayResDTO payResult = getPayResult(orders.getId());
+            Integer payStatus = payResult.getPayStatus();
+            //最新状态任然为未支付则取消订单
+            if(Objects.equals(payStatus, OrderPayStatusEnum.NO_PAY.getStatus())) {
+                //取消订单
+                OrdersCancelReqDTO orderCancelDTO = BeanUtils.toBean(orders, OrdersCancelReqDTO.class);
+                orderCancelDTO.setCancelReason("订单超时支付，自动取消");
+                cancel(orderCancelDTO);
+                orders = getById(orders.getId());
+            }
+        }
+        return orders;
     }
 
     private void updateOrdersRefund(Orders orders) {
