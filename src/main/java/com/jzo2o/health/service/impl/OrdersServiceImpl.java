@@ -17,8 +17,10 @@ import com.jzo2o.api.trade.enums.TradingStateEnum;
 import com.jzo2o.common.expcetions.BadRequestException;
 import com.jzo2o.common.expcetions.CommonException;
 import com.jzo2o.common.model.CurrentUserInfo;
+import com.jzo2o.common.model.PageResult;
 import com.jzo2o.common.model.msg.TradeStatusMsg;
 import com.jzo2o.common.utils.BeanUtils;
+import com.jzo2o.common.utils.CollUtils;
 import com.jzo2o.common.utils.ObjectUtils;
 import com.jzo2o.health.enums.OrderPayStatusEnum;
 import com.jzo2o.health.enums.OrderStatusEnum;
@@ -26,13 +28,12 @@ import com.jzo2o.health.mapper.OrdersMapper;
 import com.jzo2o.health.model.UserThreadLocal;
 import com.jzo2o.health.model.domain.*;
 import com.jzo2o.health.model.dto.request.OrdersCancelReqDTO;
+import com.jzo2o.health.model.dto.request.OrdersPageQueryReqDTO;
 import com.jzo2o.health.model.dto.request.PlaceOrderReqDTO;
-import com.jzo2o.health.model.dto.response.OrdersDetailResDTO;
-import com.jzo2o.health.model.dto.response.OrdersPayResDTO;
-import com.jzo2o.health.model.dto.response.OrdersResDTO;
-import com.jzo2o.health.model.dto.response.PlaceOrderResDTO;
+import com.jzo2o.health.model.dto.response.*;
 import com.jzo2o.health.properties.TradeProperties;
 import com.jzo2o.health.service.*;
+import com.jzo2o.mysql.utils.PageUtils;
 import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -258,6 +259,76 @@ public class OrdersServiceImpl extends ServiceImpl<OrdersMapper,Orders> implemen
         orders = cancelIfPayOvertime(orders);
         OrdersDetailResDTO ordersDetailResDTO = BeanUtils.toBean(orders, OrdersDetailResDTO.class);
         return ordersDetailResDTO;
+    }
+
+    @Override
+    public PageResult<OrdersResDTO> pageQueryAdmin(OrdersPageQueryReqDTO ordersPageQueryReqDTO) {
+        Page<Orders> ordersPage = PageUtils.parsePageQuery(ordersPageQueryReqDTO, Orders.class);
+        //直接创建的话，右边的泛型也要填写
+        LambdaQueryWrapper<Orders> queryWrapper = new LambdaQueryWrapper<Orders>()
+                .in(CollUtils.isNotEmpty(ordersPageQueryReqDTO.getIds()), Orders::getId, ordersPageQueryReqDTO.getIds())
+                .eq(ObjectUtils.isNotNull(ordersPageQueryReqDTO.getOrderStatus()), Orders::getOrderStatus, ordersPageQueryReqDTO.getOrderStatus())
+                .eq(ObjectUtils.isNotNull(ordersPageQueryReqDTO.getMemberPhone()), Orders::getMemberPhone, ordersPageQueryReqDTO.getMemberPhone());
+        Page<Orders> page = baseMapper.selectPage(ordersPage, queryWrapper);
+        return PageUtils.toPage(page, OrdersResDTO.class);
+    }
+
+    @Override
+    public OrdersCountResDTO countByStatus() {
+        //1.全部数量
+        Integer totalCount = lambdaQuery().count();
+        Integer noPayCount = lambdaQuery().eq(Orders::getOrderStatus, OrderStatusEnum.NO_PAY.getStatus()).count();
+        Integer waitingCheckupCount = lambdaQuery().eq(Orders::getOrderStatus, OrderStatusEnum.WAITING_CHECKUP.getStatus()).count();
+        Integer completedCheckupCount = lambdaQuery().eq(Orders::getOrderStatus, OrderStatusEnum.COMPLETED_CHECKUP.getStatus()).count();
+        Integer cancelledCount = lambdaQuery().eq(Orders::getOrderStatus, OrderStatusEnum.CANCELLED.getStatus()).count();
+        Integer closedCount = lambdaQuery().eq(Orders::getOrderStatus, OrderStatusEnum.CLOSED.getStatus()).count();
+        OrdersCountResDTO ordersCountResDTO = new OrdersCountResDTO();
+        ordersCountResDTO.setTotalCount(totalCount);
+        ordersCountResDTO.setNoPayCount(noPayCount);
+        ordersCountResDTO.setWaitingCheckupCount(waitingCheckupCount);
+        ordersCountResDTO.setCompletedCheckupCount(completedCheckupCount);
+        ordersCountResDTO.setCancelledCount(cancelledCount);
+        ordersCountResDTO.setClosedCount(closedCount);
+        return ordersCountResDTO;
+    }
+
+    @Override
+    public AdminOrdersDetailResDTO getOrderById(Long id) {
+        Orders orders = baseMapper.selectById(id);
+        AdminOrdersDetailResDTO adminOrdersDetailResDTO = new AdminOrdersDetailResDTO();
+        // 1.订单信息
+        AdminOrdersDetailResDTO.OrderInfo orderInfo = BeanUtils.toBean(orders, AdminOrdersDetailResDTO.OrderInfo.class);
+        // 2.支付信息 渠道 时间 可以转换
+        AdminOrdersDetailResDTO.PayInfo payInfo = BeanUtils.toBean(orders, AdminOrdersDetailResDTO.PayInfo.class);
+        // 2.1 第三方流水号
+        payInfo.setThirdOrderId(orders.getTransactionId());
+        // 2.2 状态只有 0 和 1 即支付未支付两种，所以要更改
+        if (!Objects.equals(orders.getPayStatus(), OrderPayStatusEnum.NO_PAY.getStatus())) {
+            payInfo.setPayStatus(OrderPayStatusEnum.PAY_SUCCESS.getStatus());
+        }
+        // 3.取消状态 取消时间 取消理由直接 访问取消订单表并拷贝
+        AdminOrdersDetailResDTO.CancelInfo cancelInfo = new AdminOrdersDetailResDTO.CancelInfo();
+        if(orders.getOrderStatus() == OrderStatusEnum.CANCELLED.getStatus()) {
+            OrdersCancelled ordersCancelled = ordersCancelledService.getById(id);
+            BeanUtils.copyProperties(ordersCancelled, cancelInfo);
+        }
+        // 4.退款信息
+        AdminOrdersDetailResDTO.RefundInfo refundInfo = new AdminOrdersDetailResDTO.RefundInfo();
+        if (Objects.equals(orders.getOrderStatus(), OrderStatusEnum.CLOSED.getStatus())) {
+            //取消理由和时间
+            OrdersCancelled ordersCancelled = ordersCancelledService.getById(id);
+            BeanUtils.copyProperties(ordersCancelled, refundInfo);
+            //支付渠道 和 第三方退款单号
+            BeanUtils.copyProperties(orders, refundInfo);
+            //支付状态相对应
+            refundInfo.setRefundStatus(orders.getPayStatus());
+        }
+        // 5.整合信息
+        adminOrdersDetailResDTO.setOrderInfo(orderInfo);
+        adminOrdersDetailResDTO.setPayInfo(payInfo);
+        adminOrdersDetailResDTO.setCancelInfo(cancelInfo);
+        adminOrdersDetailResDTO.setRefundInfo(refundInfo);
+        return adminOrdersDetailResDTO;
     }
 
     private Orders cancelIfPayOvertime(Orders orders) {

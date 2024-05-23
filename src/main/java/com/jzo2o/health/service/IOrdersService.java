@@ -2,13 +2,12 @@ package com.jzo2o.health.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.jzo2o.api.trade.enums.PayChannelEnum;
+import com.jzo2o.common.model.PageResult;
 import com.jzo2o.health.model.domain.Orders;
 import com.jzo2o.health.model.dto.request.OrdersCancelReqDTO;
+import com.jzo2o.health.model.dto.request.OrdersPageQueryReqDTO;
 import com.jzo2o.health.model.dto.request.PlaceOrderReqDTO;
-import com.jzo2o.health.model.dto.response.OrdersDetailResDTO;
-import com.jzo2o.health.model.dto.response.OrdersPayResDTO;
-import com.jzo2o.health.model.dto.response.OrdersResDTO;
-import com.jzo2o.health.model.dto.response.PlaceOrderResDTO;
+import com.jzo2o.health.model.dto.response.*;
 
 import java.util.List;
 
@@ -40,4 +39,10 @@ public interface IOrdersService extends IService<Orders> {
     List<OrdersResDTO> pageQuery(Integer ordersStatus, Long sortBy);
 
     OrdersDetailResDTO detail(Long id);
+
+    PageResult<OrdersResDTO> pageQueryAdmin(OrdersPageQueryReqDTO ordersPageQueryReqDTO);
+
+    OrdersCountResDTO countByStatus();
+
+    AdminOrdersDetailResDTO getOrderById(Long id);
 }
